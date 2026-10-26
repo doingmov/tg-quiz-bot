@@ -1,11 +1,17 @@
 import os
+from telegram import ReplyKeyboardMarkup
 
 from dotenv import load_dotenv
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
 
 def start(update, context):
-    update.message.reply_text('Здравствуйте')
+    keyboard = [
+        ['Новый вопрос', 'Сдаться'],
+        ['Мой счёт'],
+    ]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    update.message.reply_text('Здравствуйте', reply_markup=reply_markup)
 
 
 def echo(update, context):
