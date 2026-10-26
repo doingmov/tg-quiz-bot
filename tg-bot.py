@@ -1,5 +1,6 @@
 import os
 import random
+import redis
 
 
 from telegram import ReplyKeyboardMarkup
@@ -17,9 +18,9 @@ def load_questions(path):
     for block in content.split('\n\n'):
         block = block.strip()
         if block.startswith('Вопрос'):
-            question = block.split(':', 1)[1].strip()
+            question = block.split(':', 1)[1].strip().replace('\n', '')
         elif block.startswith('Ответ') and question:
-            answer = block.split(':', 1)[1].strip()
+            answer = block.split(':', 1)[1].strip().replace('\n', '')
             questions_and_answers[question] = answer
             question = None
 
@@ -34,6 +35,16 @@ def load_all_questions(folder):
     return all_questions
 
 
+def normalize(text):
+    text = text.lower().replace('ё', 'е')
+    return ' '.join(text.split()).strip(' .,!?"«»')
+
+
+def get_short_answer(answer):
+    short = answer.split('.')[0].split('(')[0]
+    return normalize(short) or normalize(answer)
+
+
 def start(update, context):
     keyboard = [
         ['Новый вопрос', 'Сдаться'],
@@ -45,22 +56,45 @@ def start(update, context):
 
 def handle_message(update, context):
     text = update.message.text
+    user_id = update.effective_user.id
+    db = context.bot_data['redis']
+    quiz = context.bot_data['quiz']
 
     if text == 'Новый вопрос':
-        quiz = context.bot_data['quiz']
         question = random.choice(list(quiz.keys()))
+        db.set(f'tg-{user_id}', question)
         update.message.reply_text(question)
+        return
+
+    question = db.get(f'tg-{user_id}')
+    if question is None:
+        update.message.reply_text('Нажми «Новый вопрос», чтобы начать')
+        return
+
+    correct_answer = get_short_answer(quiz[question])
+    if normalize(text) == correct_answer:
+        update.message.reply_text(
+            'Правильно! Поздравляю! Для следующего вопроса нажми «Новый вопрос»'
+        )
     else:
-        update.message.reply_text(text)
+        update.message.reply_text('Неправильно… Попробуешь ещё раз?')
 
 
 def main():
     load_dotenv()
     token = os.environ['TELEGRAM_TOKEN']
 
+    db = redis.Redis(
+        host=os.environ['REDIS_HOST'],
+        port=int(os.environ['REDIS_PORT']),
+        password=os.environ.get('REDIS_PASSWORD'),
+        decode_responses=True,
+    )
+
     updater = Updater(token)
     dispatcher = updater.dispatcher
     dispatcher.bot_data['quiz'] = load_all_questions('quiz-questions')
+    dispatcher.bot_data['redis'] = db
 
     dispatcher.add_handler(CommandHandler('start', start))
     dispatcher.add_handler(
