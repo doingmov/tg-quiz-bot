@@ -3,9 +3,15 @@ import random
 import redis
 
 
+from enum import Enum, auto
 from telegram import ReplyKeyboardMarkup
 from dotenv import load_dotenv
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler
+
+
+class State(Enum):
+    NEW_QUESTION = auto()
+    SOLUTION_ATTEMPT = auto()
 
 
 def load_questions(path):
@@ -52,32 +58,36 @@ def start(update, context):
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     update.message.reply_text('Здравствуйте', reply_markup=reply_markup)
+    return State.NEW_QUESTION
 
 
-def handle_message(update, context):
-    text = update.message.text
+def handle_new_question_request(update, context):
     user_id = update.effective_user.id
-    db = context.bot_data['redis']
     quiz = context.bot_data['quiz']
+    db = context.bot_data['redis']
 
-    if text == 'Новый вопрос':
-        question = random.choice(list(quiz.keys()))
-        db.set(f'tg-{user_id}', question)
-        update.message.reply_text(question)
-        return
+    question = random.choice(list(quiz.keys()))
+    db.set(f'tg-{user_id}', question)
+    update.message.reply_text(question)
+    return State.SOLUTION_ATTEMPT
+
+
+def handle_solution_attempt(update, context):
+    user_id = update.effective_user.id
+    quiz = context.bot_data['quiz']
+    db = context.bot_data['redis']
 
     question = db.get(f'tg-{user_id}')
-    if question is None:
-        update.message.reply_text('Нажми «Новый вопрос», чтобы начать')
-        return
-
     correct_answer = get_short_answer(quiz[question])
-    if normalize(text) == correct_answer:
+
+    if normalize(update.message.text) == correct_answer:
         update.message.reply_text(
             'Правильно! Поздравляю! Для следующего вопроса нажми «Новый вопрос»'
         )
-    else:
-        update.message.reply_text('Неправильно… Попробуешь ещё раз?')
+        return State.NEW_QUESTION
+
+    update.message.reply_text('Неправильно… Попробуешь ещё раз?')
+    return State.SOLUTION_ATTEMPT
 
 
 def main():
@@ -96,10 +106,26 @@ def main():
     dispatcher.bot_data['quiz'] = load_all_questions('quiz-questions')
     dispatcher.bot_data['redis'] = db
 
-    dispatcher.add_handler(CommandHandler('start', start))
-    dispatcher.add_handler(
-        MessageHandler(Filters.text & ~Filters.command, handle_message)
+    new_question_button = Filters.regex('^Новый вопрос$')
+    any_button = Filters.regex('^(Новый вопрос|Сдаться|Мой счёт)$')
+
+    conversation = ConversationHandler(
+        entry_points=[CommandHandler('start', start)],
+        states={
+            State.NEW_QUESTION: [
+                MessageHandler(new_question_button, handle_new_question_request),
+            ],
+            State.SOLUTION_ATTEMPT: [
+                MessageHandler(new_question_button, handle_new_question_request),
+                MessageHandler(
+                    Filters.text & ~Filters.command & ~any_button,
+                    handle_solution_attempt,
+                ),
+            ],
+        },
+        fallbacks=[CommandHandler('start', start)],
     )
+    dispatcher.add_handler(conversation)
 
     updater.start_polling()
     updater.idle()
