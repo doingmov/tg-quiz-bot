@@ -4,13 +4,14 @@ import random
 import redis
 import vk_api as vk
 from dotenv import load_dotenv
-from vk_api.longpoll import VkLongPoll, VkEventType
 from vk_api.keyboard import VkKeyboard, VkKeyboardColor
+from vk_api.longpoll import VkLongPoll, VkEventType
+from vk_api.utils import get_random_id
 
 from quiz_utils import load_all_questions, normalize, get_short_answer
 
 
-def send_keyboard(event, vk_api):
+def get_keyboard():
     keyboard = VkKeyboard()
     keyboard.add_button('Новый вопрос', color=VkKeyboardColor.POSITIVE)
     keyboard.add_button('Сдаться', color=VkKeyboardColor.NEGATIVE)
@@ -23,7 +24,7 @@ def send(vk_api, user_id, text, keyboard=None):
     vk_api.messages.send(
         user_id=user_id,
         message=text,
-        random_id=random.randint(1, 1000000),
+        random_id=get_random_id(),
         keyboard=keyboard,
     )
 
@@ -45,7 +46,7 @@ def handle_event(event, vk_api, db, quiz):
         send_new_question(vk_api, user_id, db, quiz)
     elif text == 'Сдаться':
         question = db.get(key)
-        if question is None:
+        if question not in quiz:
             send(vk_api, user_id, 'Сначала нажми «Новый вопрос»')
             return
         send(vk_api, user_id, f'Правильный ответ: {quiz[question]}')
@@ -54,7 +55,7 @@ def handle_event(event, vk_api, db, quiz):
         send(vk_api, user_id, 'Счёт пока не подсчитывается')
     else:
         question = db.get(key)
-        if question is None:
+        if question not in quiz:
             send(vk_api, user_id, 'Нажми «Новый вопрос», чтобы начать')
             return
         if normalize(text) == get_short_answer(quiz[question]):
@@ -62,7 +63,8 @@ def handle_event(event, vk_api, db, quiz):
             send(
                 vk_api,
                 user_id,
-                'Правильно! Поздравляю! Для следующего вопроса нажми «Новый вопрос»',
+                'Правильно! Поздравляю! '
+                'Для следующего вопроса нажми «Новый вопрос»',
             )
         else:
             send(vk_api, user_id, 'Неправильно… Попробуешь ещё раз?')
