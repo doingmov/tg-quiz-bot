@@ -61,7 +61,7 @@ def start(update, context):
     return State.NEW_QUESTION
 
 
-def handle_new_question_request(update, context):
+def send_new_question(update, context):
     user_id = update.effective_user.id
     quiz = context.bot_data['quiz']
     db = context.bot_data['redis']
@@ -69,6 +69,10 @@ def handle_new_question_request(update, context):
     question = random.choice(list(quiz.keys()))
     db.set(f'tg-{user_id}', question)
     update.message.reply_text(question)
+
+
+def handle_new_question_request(update, context):
+    send_new_question(update, context)
     return State.SOLUTION_ATTEMPT
 
 
@@ -90,6 +94,17 @@ def handle_solution_attempt(update, context):
     return State.SOLUTION_ATTEMPT
 
 
+def handle_give_up(update, context):
+    user_id = update.effective_user.id
+    quiz = context.bot_data['quiz']
+    db = context.bot_data['redis']
+
+    question = db.get(f'tg-{user_id}')
+    update.message.reply_text(f'Правильный ответ: {quiz[question]}')
+
+    send_new_question(update, context)
+    return State.SOLUTION_ATTEMPT
+
 def main():
     load_dotenv()
     token = os.environ['TELEGRAM_TOKEN']
@@ -107,6 +122,7 @@ def main():
     dispatcher.bot_data['redis'] = db
 
     new_question_button = Filters.regex('^Новый вопрос$')
+    give_up_button = Filters.regex('^Сдаться$')
     any_button = Filters.regex('^(Новый вопрос|Сдаться|Мой счёт)$')
 
     conversation = ConversationHandler(
@@ -117,6 +133,7 @@ def main():
             ],
             State.SOLUTION_ATTEMPT: [
                 MessageHandler(new_question_button, handle_new_question_request),
+                MessageHandler(give_up_button, handle_give_up),
                 MessageHandler(
                     Filters.text & ~Filters.command & ~any_button,
                     handle_solution_attempt,
